@@ -845,7 +845,11 @@ NVN_API(nvnWindowSetCrop) {
 // are none: OOT_GPU_AHEAD=0 (about 13 fps) and a fixed interval of 2 both remove them (0 of 53 shots). Hookshot finds
 // the same frame-rate dependence (its "dark frames", none at 33 fps; read for behaviour only). So the pacer holds
 // whole frame rates: 60 fps, or interval 2 (30 fps, as a console game that cannot hold 60 shows every frame for two
-// vsyncs) while frames miss 60. It decides from the share of such frames in a sliding window of AP_WIN frames:
+// vsyncs) while frames miss 60. It decides from the share of such frames in a sliding window of AP_WIN frames.
+// Since 2026-11-10 the cause is known: not the uneven rate itself but the CPU a frame ahead of the GPU at it (the
+// acquire below, ahead 0). Below 60 the pacer now keeps the game's interval and the CPU in step with the GPU
+// (ap_var): a variable rate with no black frames, 35-47 fps in the Forest Temple where it held 30 (RTX 5070);
+// OOT_PACE_LOW=30 brings the interval of 2 back. The rule:
 // - At 60, a frame's cost is the time since the previous present less what its acquire slept for the pacer; the
 //   acquire's GPU fence wait counts, so a GPU-bound frame misses too. AP_UP_N of the window's frames over AP_MISS_MS
 //   (one tick and a margin for timer jitter): pace at 30.
@@ -880,6 +884,7 @@ NVN_API(nvnWindowSetCrop) {
 #define AP_S 1000000000ull
 static int ap_mode = -2;                 // -1 adaptive, 0 the game's interval, n > 0 fixed
 static int ap_ticks = 1;                 // adaptive: the interval paced at
+static int ap_var = 1;                   // OOT_PACE_LOW: below 60 a variable rate in step with the GPU (1) or 30 (0)
 static uint64_t ap_last_present, ap_switched, ap_hold_ns = AP_HOLD_S * AP_S;   // last change of interval, hold at 30
 static volatile LONG64 ap_wait_ns, ap_sleep_ns;   // acquire waits since the last present, and the pacer's sleep in them
 static uint64_t ap_gpu_tot[AP_GPU_N];    // perf_gpu_busy_total at the last AP_GPU_N presents
@@ -906,12 +911,15 @@ static double ap_pct(float *v, unsigned n, double p) {
 static void ap_init(void) {
     if (ap_mode != -2) return;
     const char *e = cfg_get("OOT_PRESENT_INTERVAL");
-    ap_mode = !e || !*e || !strcmp(e, "auto") ? -1 : atoi(e) < 0 ? 0 : atoi(e);
+    ap_mode = !e || !*e || !strcmp(e, "auto") ? -1 : !strcmp(e, "alt") ? -3 : atoi(e) < 0 ? 0 : atoi(e);
+    const char *low = cfg_get("OOT_PACE_LOW");
+    ap_var = !(low && !strcmp(low, "30"));
     if (ap_mode == -1) {
         perf_gpu_timing_want();   // the prediction at 30 needs the GPU time
-        rt_log("nvn: present interval adaptive: 60 fps, or 30 while %d of %d frames miss 60 (OOT_PRESENT_INTERVAL)",
-               AP_UP_N, AP_WIN);
+        rt_log("nvn: present interval adaptive: 60 fps, or %s while %d of %d frames miss 60 (OOT_PRESENT_INTERVAL, "
+               "OOT_PACE_LOW)", ap_var ? "a variable rate with the CPU in step with the GPU" : "30", AP_UP_N, AP_WIN);
     } else if (ap_mode > 0) rt_log("nvn: OOT_PRESENT_INTERVAL=%d: presents paced to %d of 60 Hz", ap_mode, ap_mode);
+    else if (ap_mode == -3) rt_log("nvn: OOT_PRESENT_INTERVAL=alt: presents alternate 1 and 2 ticks of 60 Hz (diagnostic: the uneven rate of the black frames)");
 }
 
 static void ap_window_reset(void) {
@@ -976,7 +984,8 @@ static void ap_present(uint64_t now) {
             ap_hold_ns = ap_hold_ns * 2 > AP_HOLD_MAX_S * AP_S ? AP_HOLD_MAX_S * AP_S : ap_hold_ns * 2;
         else ap_hold_ns = AP_HOLD_S * AP_S;
         rt_log("nvn: frames miss 60 Hz (%d of the last %d cost over %.1f ms, %.1f ms on average; GPU %.1f ms): "
-               "pacing at 30 fps for at least %llu s", ap_nbad, ap_n, AP_MISS_MS, ap_sum_cost / n, ap_sum_gpu / n,
+               "%s for at least %llu s", ap_nbad, ap_n, AP_MISS_MS, ap_sum_cost / n, ap_sum_gpu / n,
+               ap_var ? "variable rate, CPU in step with the GPU" : "pacing at 30 fps",
                (unsigned long long)(ap_hold_ns / AP_S));
         ap_ticks = 2;
     } else {
@@ -994,7 +1003,10 @@ static uint64_t present_period(const win_t *o) {
     ap_init();
     uint64_t ticks = o->interval > 0 ? (uint64_t)o->interval : 1ull;
     if (ap_mode > 0) ticks = (uint64_t)ap_mode;
-    else if (ap_mode == -1 && (uint64_t)ap_ticks > ticks) ticks = (uint64_t)ap_ticks;
+    else if (ap_mode == -3) { static unsigned alt; ticks = 1 + (alt++ & 1); }
+    else if (ap_mode == -1 && !ap_var && (uint64_t)ap_ticks > ticks) ticks = (uint64_t)ap_ticks;
+    // ap_var below 60: the game's interval, so every frame goes out as soon as it is ready (pace: a late frame is
+    // presented at once) and a variable-refresh display shows it then.
     return ticks * 1000000000ull / VSYNC_HZ;
 }
 
@@ -1056,10 +1068,17 @@ NVN_API(nvnWindowAcquireTexture) {
         ahead = e && *e ? atoi(e) : 1;
         if (ahead < 0 || ahead > 3) ahead = 1;
     }
+    // Below 60 with ap_var the CPU starts a frame only once the GPU finished the previous one (ahead 0). With the CPU a
+    // frame ahead at an uneven rate the game's frames went black (NaN from the scene pass on, spread by bloom and the
+    // upscaler): the replay's VRAM mirror takes the guest's bytes and writes the GPU's results back when the GPU runs
+    // a submission, not when it is submitted, and a CPU already on the next frame races both (docs/level.md,
+    // 2026-11-10). Forest Temple walk at a free rate: 144 isolated black of 2833 presents at 47 fps with ahead 1, 0 of
+    // 2224 at 37 fps with ahead 0; at a steady 60 the overlap is kept, where it is worth 60 against 44 fps.
+    int eff = ap_mode == -1 && ap_var && ap_ticks == 2 ? 0 : ahead;
     uint64_t now_f = nvn_fence_last();
-    if (o->acquires >= (uint64_t)ahead) {
-        uint64_t g = o->acq[(o->acquires - (uint64_t)ahead) & 3];   // 0 for "at this acquire"
-        if (ahead == 0) g = now_f;
+    if (o->acquires >= (uint64_t)eff) {
+        uint64_t g = o->acq[(o->acquires - (uint64_t)eff) & 3];   // 0 for "at this acquire"
+        if (eff == 0) g = now_f;
         if (g > f) f = g;
     }
     o->acq[o->acquires++ & 3] = now_f;

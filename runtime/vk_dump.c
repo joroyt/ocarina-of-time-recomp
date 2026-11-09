@@ -372,6 +372,10 @@ static const char *copy_out(VkExec *ex, VkImage image, VkFormat vf, VkImageAspec
 // the draw that writes a bad value.
 static uint64_t tr_lo, tr_hi, tr_frame, tr_fs, tr_draws_addr;
 static int tr_seq, tr_draws_pass = -1, tr_draw, tr_pending_vb;
+// OOT_DUMP_TRACE_DRAWS=full: the draws of at most 6 vertices (full-screen triangles and quads) of every pass, whatever
+// its number or target: a lighting or composite pass, cheap enough not to change the frame timing it is looking at.
+static int tr_draws_full;
+int vk_dump_draw_count;   // vk_exec_draw.c prepare_draw: the vertex count of the draw being recorded
 static char tr_ctx[400];   // the traced draw's vertex buffer 0 and vertex-stage uniform blocks
 static uint64_t tr_vb, tr_vb_n, tr_vb_hash;   // its vertex buffer 0 and the hash of its bytes at the draw (record time)
 static uint64_t tr_hash(uint64_t a, uint64_t n) {
@@ -940,7 +944,7 @@ void vk_dump_indices(uint64_t addr, int itype, int count) {
 
 void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeInfo *info) {
     if (tr_draws_pass >= 0 && tr_hi && tr_frame >= tr_lo && tr_frame <= tr_hi && ex->color[0].tex &&
-        (tr_draws_addr ? (uint64_t)(uintptr_t)ex->color[0].tex->mem == tr_draws_addr : tr_seq == tr_draws_pass)) {
+        (tr_draws_full ? vk_dump_draw_count > 0 && vk_dump_draw_count <= 6 : tr_draws_addr ? (uint64_t)(uintptr_t)ex->color[0].tex->mem == tr_draws_addr : tr_seq == tr_draws_pass)) {
         tr_fs = shader_hash(s->fs);
         // each vertex- and fragment-stage uniform block as the GPU reads it (the submission's snapshot, else memory):
         // its address and, when it holds any, how many NaN or infinite floats
@@ -1111,7 +1115,7 @@ int vk_dump_pass_seq(void) { return seq; }
 
 void vk_dump_after_draw(VkExec *ex) {
     if (!in_draw_copy && tr_draws_pass >= 0 && ex->color[0].tex &&
-        (tr_draws_addr ? (uint64_t)(uintptr_t)ex->color[0].tex->mem == tr_draws_addr : tr_seq == tr_draws_pass) && tr_hi && tr_frame >= tr_lo && tr_frame <= tr_hi &&
+        (tr_draws_full ? vk_dump_draw_count > 0 && vk_dump_draw_count <= 6 : tr_draws_addr ? (uint64_t)(uintptr_t)ex->color[0].tex->mem == tr_draws_addr : tr_seq == tr_draws_pass) && tr_hi && tr_frame >= tr_lo && tr_frame <= tr_hi &&
         ex->color[0].image && ex->color[0].width >= 1280 && !ex->color[0].blocks && !ex->color[0].is3d) {
         in_draw_copy = 1;
         int reopen;
@@ -1165,7 +1169,8 @@ void vk_dump_pass_end(VkExec *ex) {
     if (tr_hi) {
         const VkExecTarget *t = &ex->color[0];
         char what[64];
-        snprintf(what, sizeof what, "pass %u draws %d", tr_seq, pass_draws);
+        snprintf(what, sizeof what, "pass %u draws %d at %#llx", tr_seq, pass_draws,
+                 (unsigned long long)(uintptr_t)(t->tex ? t->tex->mem : NULL));   // the address OOT_DUMP_TRACE_DRAWS=a takes
         if (t->tex && t->image && !t->blocks && !t->is3d && t->samples <= 1)
             tr_copy(ex, t->image, t->format, t->aspect, t->level, t->base_layer, t->width, t->height, what);
     }
@@ -1376,6 +1381,7 @@ void vk_dump_init(void) {
     if (tr && *tr && sscanf(tr, "%llu-%llu", (unsigned long long *)&tr_lo, (unsigned long long *)&tr_hi) == 2 && tr_hi) {
         vk_dump_armed = 1;   // the hooks run; no dump frame, so active() stays 0
         const char *td = cfg_get("OOT_DUMP_TRACE_DRAWS");
+        if (td && !strcmp(td, "full")) tr_draws_full = 1, tr_draws_pass = 0;
         if (td && *td == 'a') tr_draws_addr = strtoull(td + 1, NULL, 0), tr_draws_pass = 0;
         else if (td && *td) tr_draws_pass = atoi(td);
         rt_log("vk_dump: OOT_DUMP_TRACE: centre and corner of the large targets of presents %llu-%llu",

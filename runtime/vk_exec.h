@@ -173,6 +173,7 @@ int vk_dump_pass_seq(void);
 void vk_dump_init(void);                 // reads the environment; vk_exec_record's first call
 void vk_dump_pass_end(VkExec *ex);       // after vkCmdEndRendering
 void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeInfo *info);   // after a draw's binds
+extern int vk_dump_draw_count;   // the vertex count of that draw (OOT_DUMP_TRACE_DRAWS=full)
 void vk_dump_xfb(VkExec *ex, uint32_t op, const void *payload);   // OP_XFB_BIND / OP_XFB_BEGIN / OP_XFB_END, as a note
 void vk_dump_arm(uint64_t frame);                                 // OOT_DUMP=when: the dump frame, once (boot.c)
 void vk_dump_after_draw(VkExec *ex);                              // after a draw's command: OOT_DUMP_DRAWS copies

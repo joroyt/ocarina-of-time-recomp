@@ -2923,7 +2923,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (fbl & ex->fb_dirty) feedback_barrier(ex);
     feedback_written(ex, &s);
     bind_vertex_buffers(ex);
-    if (vk_dump_armed) vk_dump_draw(ex, &s, p, info);
+    if (vk_dump_armed) vk_dump_draw_count = count, vk_dump_draw(ex, &s, p, info);
     vk_exec_oq_draw(ex);
     return 1;
 }

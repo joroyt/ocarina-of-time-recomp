@@ -41,7 +41,7 @@ static const char *const known[] = {
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
     "BIND_ZL", "BIND_ZR", "AUDIO_AUX", "BLOCK_VIEWS_3D", "BREAK_AT", "BREAK_BRIEF", "BREAK_COUNT", "BREAK_FOLLOW", "BREAK_WATCH", "CLOTH_REALTIME", "CORE_DIAG", "CRIT", "CRIT_OUT", "DEPTH_CLAMP", "DESC_TEMPLATE", "DUMP", "DUMP_BUF", "DUMP_DIR", "DUMP_DRAWS", "DUMP_LOG", "DUMP_VB", "DUMP_WHEN", "DUMP_XFB_PROBE",
     "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES", "FLIGHT_SPIKE_MS",
-    "FIBER_LOG", "FLIGHT_THUMBS", "FPS60", "FPS_LIMIT", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_AHEAD", "GPU_DELAY", "LOD_MAX", "SPARSE_TILES", "DUMP_VPOOL", "FRONT_FLIP", "XFB_LOG",
+    "FIBER_LOG", "FLIGHT_THUMBS", "FPS60", "FPS_LIMIT", "PACE_LOW", "FREEZE_IDLE", "FREE_CORES", "FULLSCREEN", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_AHEAD", "GPU_DELAY", "LOD_MAX", "SPARSE_TILES", "DUMP_VPOOL", "FRONT_FLIP", "XFB_LOG",
     "GOB_SWITCH2_MIN", "GPU_INDEX", "GPU_NAME", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
     "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LOCALE", "LOD_GUARD", "MEMORY", "MENU_LANG", "MENU_TEST",
     "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP", "MOTION", "MOUSE_SENS", "MOVIE_AUDIO", "MOVIE_EOS_BT", "MOVIE_HOST", "MOVIE_PACE", "MOVIE_SKIP",
@@ -59,7 +59,7 @@ static const char *const known[] = {
 
 // The oot.ini section a key cfg_set may write goes to when the file lacks it (oot.ini.example's sections).
 static const struct { const char *key, *section; } sections[] = {
-    {"FPS_LIMIT", "frame rate"}, {"FPS60", "frame rate"},
+    {"FPS_LIMIT", "frame rate"}, {"PACE_LOW", "frame rate"}, {"FPS60", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
     {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
@@ -100,7 +100,7 @@ static const CfgMeta metas[] = {
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"ASPECT", "fit", "fit|stretch", LIVE},
     // Game
-    {"FPS_LIMIT", "60", "30|60|90|120|144|display", LIVE}, {"FPS60", "1", "0|1", LIVE},
+    {"FPS_LIMIT", "60", "30|60|90|120|144|display", LIVE}, {"PACE_LOW", "var", "var|30", RESTART}, {"FPS60", "1", "0|1", LIVE},
     {"REALTIME", "1", "0|1", RESTART}, {"CLOTH_REALTIME", "1", "0|1", RESTART},
     {"HIGHFPS_FIX", "1", "0|1", RESTART},
     {"LANG", "", "ja|en-US|fr|de|it|es|zh-CN|ko|nl|pt|ru|zh-TW|en-GB|fr-CA|es-419|zh-Hans|zh-Hant|pt-BR", RESTART},

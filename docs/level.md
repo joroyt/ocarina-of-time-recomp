@@ -294,3 +294,28 @@ After each change that alters what a shader computes: the `verify-shader-change`
     (#19's) with BC3 (run-130 against run-123): commit flat at 26.3 GiB, the GPU at 15.5-16.5 ms a frame outdoors
     instead of 20-28, a steady 30 fps (1% low 26-27 instead of 15-16), and 3.1% of the presents black (`OOT_DUMP_TRACE`,
     last target all zero) instead of 27.4%. Title at 30 s with and without: both pictures (noise 0.46 and 0.47).
+- 2026-11-10 (RTX 5070): the black frames come from the CPU running a frame ahead of the GPU, not from the uneven rate
+  itself. Reproduced at will with `OOT_PRESENT_INTERVAL=alt` (new, diagnostic: presents alternate 1 and 2 ticks) on
+  the temple walk (`build/logs/walk-temple.txt`); counted from `OOT_DUMP_TRACE` lines (a black present between lit
+  ones), which now name each pass's target address, and `OOT_DUMP_TRACE_DRAWS=full` (new) traces the draws of at
+  most 6 vertices of every pass without slowing the frame as per-draw tracing of a whole pass does.
+  - On a black present the first NaN is in the scene's HDR target (1920x1080 R11G11B10F) after its geometry pass, the
+    whole corner block NaN and the centre 0; the pass list is the same as on the lit presents around it.
+  - Not it: the CPU's readbacks (exposure meter `0x25a4c7f00`, the 0x1040 buffers, the camera blocks at
+    `0x25e903000`/`0x25e908000`) change smoothly, with no 0 or infinity before a black present; leaving out the
+    write-back of uniform updates (61 black) or of small ranges (97).
+  - It: `OOT_GPU_AHEAD=0` at the same alternating rate (38.7 fps): 0 black of 801 presents against 66-98. Uploads to
+    the VRAM mirrors from a copy of guest memory taken at record time (6) and no mirror write-back at all (2) remove
+    most of them too: the mirror copies guest bytes in and GPU results out when the GPU runs a submission, so a CPU
+    already writing the next frame races both, and the write-back covers whole bound ranges, not the bytes a shader
+    changed. A diagnostic of write-back ranges whose pages the CPU wrote between record and fence found several
+    (small counters at `0x150e34000`, a block beside the camera data, the exposure meter, a 2.2 MiB buffer); no single
+    one carries it.
+  - Fix (`nvn_api_obj.c`, `ap_var`): below 60 the pacer keeps the game's interval, so every frame is presented when
+    it is ready (a variable-refresh display shows it then), and the acquire waits for the GPU to finish the previous
+    frame. At a steady 60 the overlap stays (it is worth 60 against 44 fps in the first room). Forest Temple walk at a
+    free rate: 144 isolated black of 2833 presents with the CPU a frame ahead (47 fps), 0 of 2224 in step (37 fps).
+    With the default pacer now: walk 0 black of 2207 presents at 35 fps in the heavy rooms, the first room 47 fps and 0
+    black of 30 shots, where both held 30. `OOT_PACE_LOW=30` brings the interval of 2 back.
+  - Open: the mirror races themselves. Writing back only the bytes a shader changed, and taking uploads at record
+    time where the CPU rewrites pages while the GPU is behind, would let the CPU stay a frame ahead below 60 too.
