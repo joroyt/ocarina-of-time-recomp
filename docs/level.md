@@ -319,3 +319,11 @@ After each change that alters what a shader computes: the `verify-shader-change`
     black of 30 shots, where both held 30. `OOT_PACE_LOW=30` brings the interval of 2 back.
   - Open: the mirror races themselves. Writing back only the bytes a shader changed, and taking uploads at record
     time where the CPU rewrites pages while the GPU is behind, would let the CPU stay a frame ahead below 60 too.
+  - Tried for the open part, 2026-11-10, at alternating pacing with the CPU a frame ahead (black presents of 801;
+    66-105 without changes): a word-exact write-back for dispatches (the range copied aside in VRAM before the first
+    store, a compute pass writing back only the words that changed; 44 MiB of the 57 MiB a frame) left 105, so the
+    whole-range write-back over the CPU's neighbouring bytes is not it. Leaving out the write-back below or above guest
+    address 0x200000000 left 33 and 64, all of it 2: no single buffer, rather the CPU reading GPU results a frame
+    early as a whole. So the CPU waits for the GPU below 60 (above) instead. Lesson from the attempt: a push
+    descriptor call into a replay command buffer must go through `rec_push` (vk_rec.h), or it races the recorder thread
+    (device lost with a GPU write fault).
