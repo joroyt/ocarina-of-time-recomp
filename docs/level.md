@@ -316,7 +316,9 @@ After each change that alters what a shader computes: the `verify-shader-change`
     frame. At a steady 60 the overlap stays (it is worth 60 against 44 fps in the first room). Forest Temple walk at a
     free rate: 144 isolated black of 2833 presents with the CPU a frame ahead (47 fps), 0 of 2224 in step (37 fps).
     With the default pacer now: walk 0 black of 2207 presents at 35 fps in the heavy rooms, the first room 47 fps and 0
-    black of 30 shots, where both held 30. `OOT_PACE_LOW=30` brings the interval of 2 back.
+    black of 30 shots, where both held 30 (these with the replay changes of the same day; on main 8647108 without them
+    the first room runs at 43.9 fps and the walk at 35 fps, 0 presents with NaN in the scene target of 2161, against
+    264 of 2833 at a free rate with the CPU ahead). `OOT_PACE_LOW=30` brings the interval of 2 back.
   - Open: the mirror races themselves. Writing back only the bytes a shader changed, and taking uploads at record
     time where the CPU rewrites pages while the GPU is behind, would let the CPU stay a frame ahead below 60 too.
   - Tried for the open part, 2026-11-10, at alternating pacing with the CPU a frame ahead (black presents of 801;
