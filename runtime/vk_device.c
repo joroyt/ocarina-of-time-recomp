@@ -106,6 +106,8 @@ static const char *missing_required(VkPhysicalDevice pd) {
     return miss;
 }
 
+static uint32_t gfx_queues;   // queues in gfx_family (pick_device)
+
 // Graphics+compute family that can present on win32.
 static uint32_t find_gfx_family(VkPhysicalDevice pd, const VkQueueFamilyProperties *qp, uint32_t nq) {
     for (uint32_t i = 0; i < nq; i++)
@@ -172,6 +174,7 @@ static int pick_device(void) {
     vkGetPhysicalDeviceQueueFamilyProperties(g_vk.phys, &nq, qp);
     g_vk.gfx_family = find_gfx_family(g_vk.phys, qp, nq);
     g_vk.xfer_family = g_vk.gfx_family;
+    if (g_vk.gfx_family < nq) gfx_queues = qp[g_vk.gfx_family].queueCount;
     for (uint32_t i = 0; i < nq; i++)   // a family that does transfer only (async DMA engine)
         if ((qp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) && !(qp[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))) {
             g_vk.xfer_family = i;
@@ -325,10 +328,13 @@ static int create_device(void) {
                has_fbl && c->fbl.attachmentFeedbackLoopLayout, has_lr && c->lr.dynamicRenderingLocalRead);
     }
 
-    float prio = 1.0f;
+    float prio = 1.0f, prios[2] = {1.0f, 1.0f};
+    // A second queue of the graphics family when it has one: the fence write-back copies on it, behind the fence the
+    // guest waited for instead of behind everything gfx_queue holds by then (vk_texture.c write_back_small).
+    int wbq = gfx_queues >= 2 && cfg_bool("OOT_WB_QUEUE");
     VkDeviceQueueCreateInfo qi[2] = {
-        {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.gfx_family, .queueCount = 1,
-         .pQueuePriorities = &prio}};
+        {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = g_vk.gfx_family,
+         .queueCount = wbq ? 2u : 1u, .pQueuePriorities = wbq ? prios : &prio}};
     uint32_t nqi = 1;
     if (g_vk.xfer_family != g_vk.gfx_family) {
         qi[1] = (VkDeviceQueueCreateInfo){.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -341,6 +347,8 @@ static int create_device(void) {
     free(c);
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateDevice failed (%d)", (int)r); return 0; }
     vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, 0, &g_vk.gfx_queue);
+    if (wbq) vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, 1, &g_vk.wb_queue);
+    rt_log("vk: fence write-back %s (OOT_WB_QUEUE)", wbq ? "on a second graphics queue" : "on the graphics queue");
     if (g_vk.xfer_family != g_vk.gfx_family) vkGetDeviceQueue(g_vk.device, g_vk.xfer_family, 0, &g_vk.xfer_queue);
     else { g_vk.xfer_queue = g_vk.gfx_queue; g_vk.xfer_shared = 1; }
 

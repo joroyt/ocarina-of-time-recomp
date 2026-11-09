@@ -54,7 +54,7 @@ static const char *const known[] = {
     "SHADER_MEMO", "SHARED_FONTS", "SHARPNESS", "SHOT_RING", "SHOT_RING_AT", "SHOTS", "SHOTS_DIR", "SHOTS_FULL", "SLOW_LIB_DUMP", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "SWKBD_ANSWER",
     "SWKBD_TEST", "TEST_PAD", "TEST_PREPARE_SHADERS", "TENSOR_CORES", "TEX_ALIAS", "TEX_MEMO", "TEX_RAW", "TEX_VRAM_PRESSURE", "THREAD_DUMP", "TRACE_DRAW_PROG", "TIMER_1MS", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS",
-    "WB_FENCE_LIMIT", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_PROCS", "ZSTD_CHECK", "ZSTD_NATIVE",
+    "WB_FENCE_LIMIT", "WB_QUEUE", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_PROCS", "ZSTD_CHECK", "ZSTD_NATIVE",
 };
 
 // The oot.ini section a key cfg_set may write goes to when the file lacks it (oot.ini.example's sections).
@@ -83,7 +83,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"PUSH_SKIP", "performance"}, {"SPLIT_DRAWS", "performance"}, {"SPLIT_US", "performance"}, {"VK_VALIDATION", "performance"},
     {"VK_DYN_VERTEX", "performance"}, {"VK_SUBGROUP_PIN", "performance"},
     {"TRACE", "diagnostics"}, {"AUDIO_AUX", "diagnostics"}, {"BREAK_AT", "diagnostics"}, {"BREAK_BRIEF", "diagnostics"}, {"BREAK_FOLLOW", "diagnostics"}, {"BREAK_WATCH", "diagnostics"}, {"MOVIE_AUDIO", "diagnostics"}, {"FRONT_FLIP", "diagnostics"}, {"XFB_LOG", "diagnostics"}, {"FLIGHT", "diagnostics"}, {"FLIGHT_SPIKE_MS", "diagnostics"},
-    {"WB_FENCE_LIMIT", "diagnostics"},
+    {"WB_FENCE_LIMIT", "diagnostics"}, {"WB_QUEUE", "performance"},
 };
 
 // The settings the menu shows: the value in effect when the key is unset, and what the key accepts. The only place a
@@ -134,6 +134,7 @@ static const CfgMeta metas[] = {
     // diagnostics
     {"TRACE", "", NULL, RESTART}, {"AUDIO_AUX", "1", "0|1", RESTART}, {"BREAK_AT", "", NULL, RESTART}, {"BREAK_BRIEF", "0", "0|1", RESTART}, {"BREAK_FOLLOW", "", NULL, RESTART}, {"MOVIE_AUDIO", "", NULL, RESTART}, {"FRONT_FLIP", "0", "0|1", RESTART}, {"XFB_LOG", "0", "0|1", RESTART}, {"BREAK_WATCH", "", NULL, RESTART}, {"FLIGHT", "0", "0|1", RESTART}, {"FLIGHT_SPIKE_MS", "100", "0..60000", RESTART},
     {"WB_FENCE_LIMIT", "65536", "0..1073741824", RESTART},
+    {"WB_QUEUE", "1", "0|1", RESTART},
     {"INPUT_RECORD", "", NULL, RESTART},
 };
 

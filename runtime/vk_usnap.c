@@ -49,6 +49,8 @@ static struct {
     int on;                     // this submission has a snapshot
     uint64_t fence, gen;
     Arena *arena;
+    uint8_t *shadow;            // the same bytes as the arena, in host memory, for vk_usnap_peek
+    uint64_t cshadow;
     Rng *col;                   // collected ranges
     int ncol, ccol;
     Reg *reg;                   // merged, sorted by lo, disjoint
@@ -256,8 +258,19 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     }
     if (!U.nreg) return;
     if (!(U.arena = arena_get(total))) return;
+    // The arena is device-local through the BAR when there is one: write-only for the CPU, where every read is an
+    // uncached round trip over PCIe. vk_usnap_peek reads (ptr_scan reads every bound uniform block of a dispatch), so
+    // the bytes go to a host copy first and from there to the arena: 18% of the render thread was the one load in
+    // ptr_scan that read the arena (Forest Temple, RTX 5070 without resizable BAR).
+    if (U.cshadow < total) {
+        free(U.shadow);
+        U.cshadow = total * 2;
+        if (!(U.shadow = malloc(U.cshadow))) rt_fatal("vk_usnap: out of memory");
+    }
     for (int i = 0; i < U.nreg; i++)
-        memcpy(U.arena->map + U.reg[i].off, (const void *)(uintptr_t)U.reg[i].lo, U.reg[i].hi - U.reg[i].lo);
+        memcpy(U.shadow + U.reg[i].off, (const void *)(uintptr_t)U.reg[i].lo, U.reg[i].hi - U.reg[i].lo);
+    for (int i = 0; i < U.nreg; i++)
+        memcpy(U.arena->map + U.reg[i].off, U.shadow + U.reg[i].off, U.reg[i].hi - U.reg[i].lo);
     vmaFlushAllocation(vk_ctx()->vma, U.arena->alloc, 0, total);   // a no-op on coherent memory
     U.on = 1;
     U.subs++, U.regions += (uint64_t)U.nreg, U.bytes += total, U.copy_ns += kern_now_ns() - t0;
@@ -300,7 +313,7 @@ const void *vk_usnap_peek(uint64_t addr, uint64_t n) {
     if (i >= U.nreg) return NULL;
     const Reg *r = &U.reg[i];
     if (r->dropped || addr < r->lo || addr + n > r->hi) return NULL;
-    return U.arena->map + r->off + (addr - r->lo);
+    return U.shadow + r->off + (addr - r->lo);   // the host copy: the arena may be write-only BAR memory
 }
 
 void vk_usnap_drop(uint64_t addr, uint64_t n) {

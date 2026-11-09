@@ -1331,6 +1331,58 @@ static int read_aspect(const Tex *e, VkImageAspectFlags *a) {
     }
 }
 
+// The fence write-back's copies on the second graphics queue (VkCtx.wb_queue). Through the upload batch a copy runs
+// on gfx_queue behind everything submitted by then, which is the next frame's work once the guest waited for a fence,
+// and the texture lock is held all that time: the render thread stopped at its next texture lookup. In the Forest
+// Temple a game thread spent about 30% of its time there and the replay took 14 ms a frame instead of 7. The copy
+// here waits on the timeline for the value the guest waited for and nothing else. That is enough: write_back_small
+// takes only textures whose newest recorded GPU write has a value at most that one, and while it holds the texture
+// lock the replay records no new write; uploads into such a texture went to gfx_queue before the submission that
+// rendered it. Set by write_back_small and read by image_texels, both under the texture lock.
+static uint64_t wbq_wait;   // the timeline value the copies wait for; 0: copies go through the upload batch
+static VkCommandPool wbq_pool;
+static VkCommandBuffer wbq_cb;
+static VkFence wbq_fence;
+
+static VkCommandBuffer wbq_begin(void) {
+    VkCtx *c = vk_ctx();
+    if (!wbq_pool) {
+        VkCommandPoolCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                                      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+                                      .queueFamilyIndex = c->gfx_family};
+        VkCommandBufferAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                                          .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
+        VkFenceCreateInfo fi = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if (vkCreateCommandPool(c->device, &pi, NULL, &wbq_pool) != VK_SUCCESS) rt_fatal("vk: write-back command pool");
+        ai.commandPool = wbq_pool;
+        if (vkAllocateCommandBuffers(c->device, &ai, &wbq_cb) != VK_SUCCESS ||
+            vkCreateFence(c->device, &fi, NULL, &wbq_fence) != VK_SUCCESS)
+            rt_fatal("vk: write-back command buffer");
+    }
+    vkResetCommandBuffer(wbq_cb, 0);
+    VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                                   .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    vkBeginCommandBuffer(wbq_cb, &bi);
+    return wbq_cb;
+}
+
+static void wbq_submit_wait(VkCommandBuffer cb) {
+    VkCtx *c = vk_ctx();
+    vkEndCommandBuffer(cb);
+    VkSemaphoreSubmitInfo wait = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = c->timeline,
+                                  .value = wbq_wait, .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
+    VkCommandBufferSubmitInfo cbi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cb};
+    VkSubmitInfo2 si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .waitSemaphoreInfoCount = 1, .pWaitSemaphoreInfos = &wait,
+                        .commandBufferInfoCount = 1, .pCommandBufferInfos = &cbi};
+    VkResult r = vkQueueSubmit2(c->wb_queue, 1, &si, wbq_fence);
+    if (r != VK_SUCCESS) {
+        vk_device_fault_report(r);
+        rt_fatal("vk: write-back submit failed (%d)", (int)r);
+    }
+    vkWaitForFences(c->device, 1, &wbq_fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(c->device, 1, &wbq_fence);
+}
+
 // Image <-> caller rows through a staging buffer; the GPU copy is waited for.
 static int image_texels(Tex *e, const Region *g, const NVNcopyRegion *r, uint8_t *mem, int write) {
     static volatile long n_astc, n_ds;
@@ -1378,7 +1430,8 @@ static int image_texels(Tex *e, const Region *g, const NVNcopyRegion *r, uint8_t
                                     .imageOffset = {r->xoffset, r->yoffset, g->is3d ? r->zoffset + z : 0},
                                     .imageExtent = {w, h, 1}};
     }
-    VkCommandBuffer cb = vk_upload_begin();
+    int own_q = !write && wbq_wait;   // the fence write-back: its own queue, behind the fence only
+    VkCommandBuffer cb = own_q ? wbq_begin() : vk_upload_begin();
     if (write) {
         vmaFlushAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
         barrier(cb, ALL_RW, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
@@ -1409,8 +1462,11 @@ static int image_texels(Tex *e, const Region *g, const NVNcopyRegion *r, uint8_t
         barrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT,
                 VK_ACCESS_2_HOST_READ_BIT);
     }
-    vk_upload_end();
-    vk_upload_flush(1);
+    if (own_q) wbq_submit_wait(cb);
+    else {
+        vk_upload_end();
+        vk_upload_flush(1);
+    }
     if (!write) {
         vmaInvalidateAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
         for (int z = 0; z < g->nz; z++) {
@@ -1667,7 +1723,13 @@ void vk_texture_write_back_small(uint64_t fence) {
             Tex *x = hit[j];
             hit[j] = hit[j - 1], hit[j - 1] = x;
         }
+    VkCtx *c = vk_ctx();
+    // Every hit was rendered at or before fence (above); a later copy or clear into one keeps them all on gfx_queue.
+    int own = k && c && c->wb_queue && fence;
+    for (int i = 0; i < k && own; i++) own = hit[i]->wr_fence <= fence;
+    if (own) wbq_wait = fence;
     for (int i = 0; i < k; i++) write_back(hit[i]);
+    wbq_wait = 0;
     for (int i = 0; i < k; i++) perf_count(PERF_CNT_WB);
     for (int i = k; i < n; i++) perf_count(PERF_CNT_WB_SKIP);
     free(hit);
@@ -1892,6 +1954,11 @@ void vk_texture_shutdown(void) {
     free(list);
     for (uint32_t i = 0; i < samplers.cap; i++)
         if (samplers.vals[i] && c) vkDestroySampler(c->device, (VkSampler)samplers.vals[i], NULL);
+    if (wbq_pool && c) {   // the fence write-back queue's command buffer and fence (wbq_begin)
+        vkDestroyFence(c->device, wbq_fence, NULL);
+        vkDestroyCommandPool(c->device, wbq_pool, NULL);
+        wbq_pool = VK_NULL_HANDLE, wbq_cb = VK_NULL_HANDLE, wbq_fence = VK_NULL_HANDLE;
+    }
     free(by_key.keys), free(by_key.vals), free(by_addr.keys), free(by_addr.vals), free(samplers.keys), free(samplers.vals);
     by_key = (nvn_hmap){.klen = sizeof(TexKey)};
     by_addr = (nvn_hmap){.klen = 8};

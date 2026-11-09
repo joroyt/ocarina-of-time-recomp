@@ -32,6 +32,9 @@ typedef struct VkCtx {
     VkQueue gfx_queue;                      // graphics + present
     VkQueue xfer_queue;                     // equals gfx_queue when xfer_shared
     int xfer_shared;                        // 1: no separate queue; serialise with gfx_queue
+    VkQueue wb_queue;                       // a second queue of gfx_family for the fence write-back (vk_texture.c
+                                            // write_back_small), NULL when the family has one queue; used under the
+                                            // texture lock only
     VmaAllocator vma;
     VkSemaphore timeline;                   // one timeline semaphore; values are issued by vk_sync.c
     VkDebugUtilsMessengerEXT messenger;

@@ -294,3 +294,26 @@ After each change that alters what a shader computes: the `verify-shader-change`
     (#19's) with BC3 (run-130 against run-123): commit flat at 26.3 GiB, the GPU at 15.5-16.5 ms a frame outdoors
     instead of 20-28, a steady 30 fps (1% low 26-27 instead of 15-16), and 3.1% of the presents black (`OOT_DUMP_TRACE`,
     last target all zero) instead of 27.4%. Title at 30 s with and without: both pictures (noise 0.46 and 0.47).
+- 2026-11-09, night (RTX 5070, i9-14900KF, no resizable BAR; Forest Temple save, `build/logs/a-load.txt`,
+  `OOT_PRESENT_INTERVAL=0`, `--trace perf`): the render thread took 20.5 ms a frame, 14 of them replay, with the GPU at
+  11 ms ("bound: cpu", 50 fps unpaced). `OOT_PROFILE_RENDER`: 18% one load in `ptr_scan` and about 22% waits for the
+  texture lock. Two causes, both fixed:
+  - `ptr_scan` read the uniform snapshot through `vk_usnap_peek`, whose arena is device-local BAR memory: every 8-byte
+    read an uncached PCIe round trip. The snapshot now keeps a host copy that `vk_usnap_peek` returns (`vk_usnap.c`).
+  - `vk_texture_write_back_small` (after every guest fence wait that leaves a small GPU-written target dirty) copied
+    through the upload batch on `gfx_queue`, behind the next frame's work, holding the texture lock until that finished;
+    a game thread spent about 30% of its time there and the replay stalled at its next texture lookup. The copies now
+    run on a second queue of the graphics family that waits on the timeline for the fence the guest waited for
+    (`vk_texture.c` wbq_*, `OOT_WB_QUEUE=0` goes back). With `OOT_WB_FENCE_LIMIT=0` (no write-back at all) the room ran
+    at 60.0 fps, replay 7 ms, which set the target.
+  - Result: replay 14 -> 5.5 ms, the first room 50 -> 60 fps unpaced (median frame 15.9 ms, 12-19% over 17.5 ms), GPU
+    11 ms, picture as before (`build/logs/fps-check.png` against `pr-check.png`: noise 0.65, PSNR 35.4 dB).
+  - Not changed by it: the default pacer still holds 30 in the temple. At 60 the frames that miss stay above its 10%,
+    and at 30 it predicts CPU work 10.5 + GPU 11.4 ms. Now the game's main thread waits about 6.8 ms a frame in
+    nvnSyncWait for the previous frame's fence (3-5 submits back), so the GPU time is on the critical path. In the darker
+    rooms past the first door the GPU takes 16-18 ms (43 fps unpaced, 8 black of 35 shots there: the NaN frames of
+    uneven rates; 0 of 35 with the pacer at 30). Tried without a gain: command buffer parts every 24 draws
+    (`OOT_SPLIT_DRAWS`, `OOT_SPLIT_US=0`), `OOT_REPLAY_ASYNC=1`, output 1920x1080 (GPU 16.5 against 17 ms), no mirror
+    write-back (GPU 11.0 against 11.1 ms), skipping the pass-begin barrier after draw-only passes, dropping the uniform
+    updates (both about the same GPU time). Compute is 1.3 ms of the 11 (`OOT_CS_TIME=1`); where the rest of the draw
+    time goes needs per-pass GPU timestamps.
